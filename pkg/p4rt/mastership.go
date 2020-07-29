@@ -18,7 +18,7 @@
 package p4rt
 
 import (
-	p4 "github.com/p4lang/p4runtime/proto/p4/v1"
+	p4 "github.com/p4lang/p4runtime/go/p4/v1"
 )
 
 func (c *p4rtClient) SetMastership(electionId p4.Uint128) (err error) {

@@ -20,7 +20,7 @@ package p4rt
 import (
 	"context"
 	"fmt"
-	p4 "github.com/p4lang/p4runtime/proto/p4/v1"
+	p4 "github.com/p4lang/p4runtime/go/p4/v1"
 	"google.golang.org/genproto/googleapis/rpc/code"
 )
 
@@ -89,9 +89,11 @@ func GetP4RuntimeClient(host string, deviceId uint64) (P4RuntimeClient, error) {
 
 	// First, return a P4RT client if one exists
 	if p4rtClient, ok := p4rtClients[key]; ok {
+		fmt.Printf("device %v client exist.\n", key)
 		return p4rtClient, nil
 	}
 
+	fmt.Printf("device %v client not exist, to connect.\n", key)
 	// Second, check to see if we can reuse the gRPC connection for a new P4RT client
 	conn, err := GetConnection(host)
 	if err != nil {

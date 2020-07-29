@@ -17,12 +17,12 @@ go get -v -u golang.org/x/sys/unix
 go get -v -u github.com/bocon13/p4rt-go/p4rt
 go get -v -u github.com/bocon13/p4rt-go/bin
 
-cd $GOPATH/src || exit
-protoc -Igithub.com/p4lang/p4runtime/proto \
-  --go_out=github.com/p4lang/p4runtime/proto \
-  github.com/p4lang/p4runtime/proto/p4/config/v1/p4types.proto \
-  github.com/p4lang/p4runtime/proto/p4/config/v1/p4info.proto
-protoc -I=github.com/google/protobuf/src:github.com/googleapis/googleapis:github.com/p4lang/p4runtime/proto \
-  --go_out=plugins=grpc,Mp4/config/v1/p4info.proto=github.com/p4lang/p4runtime/proto/p4/config/v1:github.com/p4lang/p4runtime/proto \
-  github.com/p4lang/p4runtime/proto/p4/v1/p4data.proto \
-  github.com/p4lang/p4runtime/proto/p4/v1/p4runtime.proto
+#cd $GOPATH/src || exit
+#protoc -Igithub.com/p4lang/p4runtime/proto \
+#  --go_out=github.com/p4lang/p4runtime/proto \
+#  github.com/p4lang/p4runtime/proto/p4/config/v1/p4types.proto \
+#  github.com/p4lang/p4runtime/proto/p4/config/v1/p4info.proto
+#protoc -I=github.com/google/protobuf/src:github.com/googleapis/googleapis:github.com/p4lang/p4runtime/proto \
+#  --go_out=plugins=grpc,Mp4/config/v1/p4info.proto=github.com/p4lang/p4runtime/proto/p4/config/v1:github.com/p4lang/p4runtime/proto \
+#  github.com/p4lang/p4runtime/proto/p4/v1/p4data.proto \
+#  github.com/p4lang/p4runtime/proto/p4/v1/p4runtime.proto

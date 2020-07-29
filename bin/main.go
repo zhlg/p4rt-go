@@ -18,145 +18,228 @@
 package main
 
 import (
-	"encoding/binary"
+	"bytes"
 	"flag"
 	"fmt"
-	"github.com/bocon13/p4rt-go/p4rt"
-	"github.com/golang/protobuf/proto"
-	p4 "github.com/p4lang/p4runtime/proto/p4/v1"
-	"google.golang.org/grpc/codes"
-	"os"
-	"sync"
-	"sync/atomic"
 	"time"
+
+	iris "github.com/kataras/iris/v12"
+	p4 "github.com/p4lang/p4runtime/go/p4/v1"
+
+	"github.com/bocon13/p4rt-go/pkg/acl"
+	"github.com/bocon13/p4rt-go/pkg/p4rt"
 )
 
-var writeReples sync.WaitGroup
-var failedWrites uint32
+//var writeReples sync.WaitGroup
+//var failedWrites uint32
+var devices map[string]string
+var verbose *bool
+var writeTraceChanSlice []chan p4rt.WriteTrace
+var cliSlice []p4rt.P4RuntimeClient
+
+//var count *uint64
 
 func main() {
-
-	target := flag.String("target", "localhost:28000", "")
-	verbose := flag.Bool("verbose", false, "")
-	p4info := flag.String("p4info", "", "")
-	count := flag.Uint64("count", 1, "")
-	deviceConfig := flag.String("deviceConfig", "", "")
+	//target = flag.String("target", "localhost:28000", "")
+	verbose = flag.Bool("verbose", false, "")
+	//count = flag.Uint64("count", 1, "")
 
 	flag.Parse()
 
-	client, err := p4rt.GetP4RuntimeClient(*target, 1)
-	if err != nil {
-		panic(err)
+	app := iris.Default()
+
+	app.Get("/devices", getDevices)
+	app.Put("/devices", addDevice)
+	app.Get("/pipeconf", getDevicesPipeConf)
+	app.Put("/pipeconf", setDevicesPipeConf)
+
+	app.Get("/devices/{id:string}/pipeconf/tables", getDeviceTables)
+
+	app.Post("/rest/v2/acls", acl.AddAcls)
+	app.Delete("/rest/v2/acls/{id:string}", acl.DeleteAcl)
+	app.Patch("/rest/v2/acls/{id:string}", acl.ModifyAcl)
+	app.Get("/rest/v2/acls", acl.GetAllAcls)
+	app.Get("/rest/v2/acls/{id:string}", acl.GetAcl)
+
+	app.Post("/rest/v2/acls/{id:string}/acl_entries", acl.AddAclEntries)
+	app.Delete("/rest/v2/acls/{id:string}/acl_entries", acl.DeleteAclEntries)
+	app.Patch("/rest/v2/acls/{pid:string}/acl_entries/{id:uint32}", acl.ModifyAclEntries)
+	app.Get("/rest/v2/acls/{pid:string}/acl_entries", acl.GetAllAclEntries)
+	app.Get("/rest/v2/acls/{pid:string}/acl_entries/{id:uint32}", acl.GetAclEntries)
+	app.Put("/rest/v2/acls/{pid:string}/acl_entries/", acl.UpdateAclEntries)
+
+	app.Run(iris.Addr(":8080"), iris.WithoutServerError(iris.ErrServerClosed))
+}
+
+func getDeviceTables(ctx iris.Context) {
+
+}
+
+func getDevices(ctx iris.Context) {
+	if len(devices) == 0 {
+		ctx.Writef("No Device.")
+		return
 	}
 
-	err = client.SetMastership(p4.Uint128{High: 0, Low: 1})
-	if err != nil {
-		panic(err)
+	var stringBuilder bytes.Buffer
+	for key, value := range devices {
+		stringBuilder.WriteString(key)
+		stringBuilder.WriteString("=")
+		stringBuilder.WriteString(value)
+		stringBuilder.WriteString(",")
 	}
 
-	err = client.SetForwardingPipelineConfig(*p4info, *deviceConfig)
-	if err != nil {
-		panic(err)
+	devStr := stringBuilder.String()
+	ctx.Writef("devices: [%s]\n", devStr)
+}
+
+//TODO: get the device info from atomix
+func addDevice(ctx iris.Context) {
+	devices = ctx.URLParams()
+
+	num := len(devices)
+	if num != 0 {
+		ctx.Writef("Add %d device successfully.\n", num)
+	} else {
+		ctx.Writef("No device added.\n")
 	}
+}
 
-	//config, err := client.GetForwardingPipelineConfig()
-	//if err != nil {
-	//	panic(err)
-	//}
+type devPipeConf struct {
+	Name     string `json:"name" validate:"required"`
+	P4info   string `json:"p4_info" validate:"required"`
+	PipeConf string `json:"pipe_conf" validate:"required"`
+}
 
-	// Set up write tracing for test
-	writeTraceChan := make(chan p4rt.WriteTrace, 100)
-	client.SetWriteTraceChan(writeTraceChan)
-	doneChan := make(chan bool)
-	go func() {
-		var writeCount, lastCount uint64
-		printInterval := 1 * time.Second
-		ticker := time.Tick(printInterval)
-		for {
-			select {
-			case trace := <-writeTraceChan:
-				writeCount += uint64(trace.BatchSize)
-				if writeCount >= *count {
-					doneChan <- true
-					return
-				}
-			case <-ticker:
-				if *verbose {
-					fmt.Printf("\033[2K\rWrote %d of %d (~%.1f flows/sec)...",
-						writeCount, *count, float64(writeCount-lastCount)/printInterval.Seconds())
-					lastCount = writeCount
-				}
-			}
+type deviceAllConf struct {
+	id uint64
+	dpc devPipeConf
+	cli p4rt.P4RuntimeClient
+	flows string
+}
+
+var devicesAllConf []deviceAllConf
+
+func getDevicesPipeConf(ctx iris.Context) {
+	var num int
+	for _, devpc := range devicesAllConf {
+		if devpc.dpc.Name == "" {
+			ctx.Writef("device name is empty, device num %d, devpc : %v.\n", len(devicesAllConf), devpc)
+			continue
 		}
-	}()
+
+		num++
+		ctx.Writef("get devid %d devicePipeConf: %v.\n", devpc.id, devpc.dpc)
+	}
+	if num == 0 {
+		ctx.Writef("No Device PipeConf.")
+	}
+}
+
+func setDevicesPipeConf(ctx iris.Context) {
+	if len(devices) == 0 {
+		ctx.Writef("The device is empty, please add the device first.\n")
+		return
+	}
+
+	var devicesPipeConf []devPipeConf
+
+	if err := ctx.ReadJSON(&devicesPipeConf); err != nil {
+		ctx.StopWithProblem(iris.StatusBadRequest, iris.NewProblem().Title("Read Json failure").DetailErr(err))
+		//ctx.StopWithError(iris.StatusBadRequest, err)
+		return
+	}
+
+	start := time.Now()
+
+	for devid, devpc := range devicesPipeConf {
+		if devpc.Name == "" {
+			ctx.Writef("device %d name is empty, devices num %d, devpc : %v.\n", devid, len(devicesPipeConf), devpc)
+			continue
+		}
+
+		dev, ok := devices[devpc.Name]
+		if !ok {
+			ctx.Writef("device name %s don't match.\n", devpc.Name)
+			return
+		}
+
+		ctx.Writef("device name %s match %s.\n", devpc.Name, dev)
+		fmt.Printf("set device %d PipeConf: %v.\n", devid+1, devpc)
+
+		client, err := p4rt.GetP4RuntimeClient(dev, 1)
+		if err != nil {
+			panic(err)
+		}
+
+		err = client.SetMastership(p4.Uint128{High: 0, Low: 1})
+		if err != nil {
+			panic(err)
+		}
+
+		err = client.SetForwardingPipelineConfig(devpc.P4info, devpc.PipeConf)
+		if err != nil {
+			panic(err)
+		}
+
+		// Set up write tracing for test
+		writeTraceChan := make(chan p4rt.WriteTrace, 100)
+		client.SetWriteTraceChan(writeTraceChan)
+
+		writeTraceChanSlice = append(writeTraceChanSlice, writeTraceChan)
+		cliSlice = append(cliSlice, client)
+
+		var device deviceAllConf
+
+		device.id = uint64(devid+1)
+		device.dpc = devpc
+		device.cli = client
+
+		devicesAllConf = append(devicesAllConf, device)
+		ctx.Writef("hello %v, set p4runtime pipeconf successfully.\n", devpc)
+	}
+
+	//doneChan := make(chan bool)
+	//go func() {
+	//	var writeCount, lastCount uint64
+	//	printInterval := 1 * time.Second
+	//	ticker := time.Tick(printInterval)
+	//	for {
+	//		for _, v := range writeTraceChanSlice {
+	//			if v != nil {
+	//				select {
+	//				case trace := <-v:
+	//					writeCount += uint64(trace.BatchSize)
+	//					if writeCount >= (*count)*uint64(len(writeTraceChanSlice)) {
+	//						doneChan <- true
+	//						return
+	//					}
+	//				case <-ticker:
+	//					if *verbose {
+	//						fmt.Printf("\033[2K\rWrote %d of %d (~%.1f flows/sec)...",
+	//							writeCount, *count, float64(writeCount-lastCount)/printInterval.Seconds())
+	//						lastCount = writeCount
+	//					}
+	//				}
+	//			}
+	//		}
+	//	}
+	//}()
 
 	// Send the flow entries
-	writeReples.Add(int(*count))
-	start := time.Now()
-	SendTableEntries(client, *count)
-
+	//writeReples.Add(int((*count)*uint64(len(cliSlice))))
+	//start := time.Now()
+	//for _, client := range(cliSlice) {
+	//	if client != nil {
+	//		go SendTableEntries(client, *count)
+	//	}
+	//}
 	// Wait for all writes to finish
-	<-doneChan
+	//<-doneChan
 	duration := time.Since(start).Seconds()
-	fmt.Printf("\033[2K\r%f seconds, %d writes, %f writes/sec\n",
-		duration, *count, float64(*count)/duration)
-	writeReples.Wait()
-	fmt.Printf("Number of failed writes: %d\n", failedWrites)
-}
-
-func SendTableEntries(p4rt p4rt.P4RuntimeClient, count uint64) {
-	match := []*p4.FieldMatch{
-		{
-			FieldId:        1, // mpls_label
-			FieldMatchType: &p4.FieldMatch_Exact_{&p4.FieldMatch_Exact{}},
-		},
-		// more fields...
-		//{
-		//	FieldId:        0,
-		//	FieldMatchType: &p4.FieldMatch_Exact_{
-		//		Exact: &p4.FieldMatch_Exact{[]byte{4, 5, 6, 7}}},
-		//},
-	}
-
-	update := &p4.Update{
-		Type: p4.Update_INSERT,
-		Entity: &p4.Entity{Entity: &p4.Entity_TableEntry{
-			TableEntry: &p4.TableEntry{
-				TableId: 33574274, // FabricIngress.forwarding.mpls
-				Match:   match,
-				Action: &p4.TableAction{Type: &p4.TableAction_Action{Action: &p4.Action{
-					ActionId: 16827758, // pop_mpls_and_next
-					Params: []*p4.Action_Param{
-						{
-							ParamId: 1,              // next_id
-							Value:   Uint64(0)[0:4], // 32 bits
-						},
-					},
-				}}},
-			},
-		}},
-	}
-
-	for i := uint64(0); i < count; i++ {
-		//update.GetEntity().GetTableEntry().GetMatch()[0].FieldId = uint32(i % 2)
-		matchField := update.GetEntity().GetTableEntry().GetMatch()[0].GetExact()
-		matchField.Value = Uint64(i)[5:8] // mpls_label is 20 bits
-		res := p4rt.Write(update)
-		go CountFailed(proto.Clone(update).(*p4.Update), res)
-	}
-}
-
-func CountFailed(update *p4.Update, res <-chan *p4.Error) {
-	err := <-res
-	if err.CanonicalCode != int32(codes.OK) { // write failed
-		atomic.AddUint32(&failedWrites, 1)
-		fmt.Fprintf(os.Stderr, "%v -> %v\n", update, err.GetMessage())
-	}
-	writeReples.Done()
-}
-
-func Uint64(v uint64) []byte {
-	bytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(bytes, v)
-	return bytes
+	//fmt.Printf("\033[2K\r%f seconds, %d writes, %f writes/sec\n",
+	//	duration, (*count)*uint64(len(cliSlice)), float64((*count)*uint64(len(cliSlice)))/duration)
+	//writeReples.Wait()
+	//fmt.Printf("Number of failed writes: %d\n", failedWrites)
+	fmt.Printf("set %d devices pipeline time consuming : %f\n", len(devices), duration)
 }

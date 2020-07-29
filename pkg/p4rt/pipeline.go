@@ -23,8 +23,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/golang/protobuf/proto"
-	p4_config_v1 "github.com/p4lang/p4runtime/proto/p4/config/v1"
-	p4 "github.com/p4lang/p4runtime/proto/p4/v1"
+	p4_config_v1 "github.com/p4lang/p4runtime/go/p4/config/v1"
+	p4 "github.com/p4lang/p4runtime/go/p4/v1"
 	"github.com/pkg/errors"
 	"io/ioutil"
 )
@@ -85,6 +85,9 @@ func setPipelineConfig(client p4.P4RuntimeClient, deviceId uint64, electionId *p
 		Config: config,
 	}
 	_, err := client.SetForwardingPipelineConfig(context.Background(), req)
+	if err != nil {
+		panic(err)
+	}
 	// ignore the response; it is an empty message
 	return err
 }

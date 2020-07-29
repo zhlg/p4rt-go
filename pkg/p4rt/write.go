@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
-	p4 "github.com/p4lang/p4runtime/proto/p4/v1"
+	p4 "github.com/p4lang/p4runtime/go/p4/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"time"
